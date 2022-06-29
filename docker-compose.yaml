@@ -1,0 +1,226 @@
+version: "3"
+
+services:
+  jellyfin:
+    container_name: jellyfin
+    image: jellyfin/jellyfin
+    restart: unless-stopped
+    networks:
+    - mediaserver
+#    ports:
+#      - 8096:8096
+    volumes:
+    - jellyfin-config:/config
+    - jellyfin-cache:/cache
+    - tvdir:/media/tv"
+    - moviesdir:/media/movies"
+    - /etc/localtime:/etc/localtime:ro
+    user: "1000:1000"
+    labels:
+    - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)"
+    - "traefik.http.routers.jellyfin.tls=true"
+    - "traefik.http.routers.jellyfin.entrypoints=websecure"
+    - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"
+
+  sonarr:
+    container_name: sonarr
+    image: linuxserver/sonarr:preview
+    restart: unless-stopped
+    networks:
+    - mediaserver
+    links:
+    - wireguard:jackett
+    - wireguard:deluge
+ #   ports:
+ #     - 8989:8989
+    environment:
+    - PUID=${PUID}
+    - PGID=${PGID}
+    - TZ=${TZ}
+    volumes:
+    - sonarr-config:/config
+    - dlcompleted:/downloads/completed
+    - tvdir:/tv
+    - /etc/localtime:/etc/localtime:ro
+    depends_on:
+    - jackett
+    - deluge
+    labels:
+    - "traefik.http.routers.sonarr.rule=Host(`sonarr.${DOMAIN}`)"
+    - "traefik.http.routers.sonarr.tls=true"
+    - "traefik.http.routers.sonarr.entrypoints=websecure"
+    - "traefik.http.services.sonarr.loadbalancer.server.port=8989"
+
+  radarr:
+    container_name: radarr
+    image: linuxserver/radarr
+    restart: unless-stopped
+    networks:
+    - mediaserver
+    links:
+    - wireguard:jackett
+    - wireguard:deluge
+#    ports:
+#      - 7878:7878
+    environment:
+    - PUID=${PUID}
+    - PGID=${PGID}
+    - TZ=${TZ}
+    volumes:
+    - radarr-config:/config
+    - dlcompleted:/downloads/completed
+    - moviesdir:/movies
+    - /etc/localtime:/etc/localtime:ro
+    depends_on:
+    - jackett
+    - deluge
+    labels:
+    - "traefik.http.routers.radarr.rule=Host(`radarr.${DOMAIN}`)"
+    - "traefik.http.routers.radarr.tls=true"
+    - "traefik.http.routers.radarr.entrypoints=websecure"
+    - "traefik.http.services.radarr.loadbalancer.server.port=7878"
+
+  ombi:
+    image: linuxserver/ombi
+    container_name: ombi
+    restart: unless-stopped
+    networks:
+    - mediaserver
+ #   ports:
+ #     - 3579:3579
+    environment:
+    - PUID=${PUID}
+    - PGID=${PGID}
+    volumes:
+    - ombi-config:/config
+    - /etc/localtime:/etc/localtime:ro
+    labels:
+    - "traefik.http.routers.ombi.rule=Host(`ombi.${DOMAIN}`)"
+    - "traefik.http.routers.ombi.tls=true"
+    - "traefik.http.routers.ombi.entrypoints=websecure"
+    - "traefik.http.services.ombi.loadbalancer.server.port=3579"
+    depends_on:
+    - radarr
+    - sonarr
+    - jellyfin
+
+  deluge:
+    image: linuxserver/deluge
+    container_name: deluge
+    network_mode: service:wireguard
+    depends_on:
+    - wireguard
+ #   ports:
+ #     - 8112:8112
+ #     - 8118:8118
+ #     - 58846:58846
+ #     - 58946:58946
+    environment:
+    - PUID=${PUID}
+    - PGID=${PGID}
+    - TZ=${TZ}
+    volumes:
+    - dlcompleted:/downloads/completed
+    - dlincompleted:/downloads/incompleted
+    - deluge-config:/config
+    - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    labels:
+    - "traefik.http.routers.deluge.rule=Host(`deluge.${DOMAIN}`)"
+    - "traefik.http.routers.deluge.tls=true"
+    - "traefik.http.routers.deluge.entrypoints=websecure"
+    - "traefik.http.services.deluge.loadbalancer.server.port=8112"
+
+  jackett:
+    image: linuxserver/jackett
+    container_name: jackett
+    restart: unless-stopped
+    network_mode: service:wireguard
+    depends_on:
+    - wireguard
+ #   ports:
+ #     - 9117:9117
+    environment:
+    - PUID=${PUID}
+    - PGID=${PGID}
+    volumes:
+    - jackett-config:/config
+    - dlcompleted:/downloads
+    - /etc/localtime:/etc/localtime:ro
+    labels:
+    - "traefik.http.routers.jackett.rule=Host(`jackett.${DOMAIN}`)"
+    - "traefik.http.routers.jackett.tls=true"
+    - "traefik.http.routers.jackett.entrypoints=websecure"
+    - "traefik.http.services.jackett.loadbalancer.server.port=9117"
+
+  traefik:
+    image: traefik:v2.3
+    container_name: traefik
+    networks:
+    - mediaserver
+    links:
+    - wireguard:jackett
+    - wireguard:deluge
+    environment:
+    - CF_API_EMAIL=${CF_API_EMAIL}
+    - CF_API_KEY=${CF_API_KEY}
+    command:
+    - --providers.docker
+    - --providers.docker.watch=true
+    - --api=true
+    - --entrypoints.websecure.address=:443
+    - --entrypoints.web.http.redirections.entrypoint.to=websecure
+    - --entrypoints.web.http.redirections.entryPoint.scheme=https
+    - --log.level=ERROR
+    - --entrypoints.https.http.tls.certresolver=dns-cloudflare
+    - --entrypoints.https.forwardedHeaders.trustedIPs=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22
+    - --certificatesResolvers.dns-cloudflare.acme.email=cloud@${DOMAIN}
+    - --certificatesResolvers.dns-cloudflare.acme.storage=/etc/traefik/acme.json
+    - --certificatesResolvers.dns-cloudflare.acme.dnsChallenge.provider=cloudflare
+    - --entrypoints.https.http.tls.domains[0].main=${DOMAIN}
+    - --entrypoints.https.http.tls.domains[0].sans=*.${DOMAIN}
+    ports:
+    - "443:443"
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ./dyn.yaml:/etc/traefik/dyn.yaml
+    - ./acme.json:/etc/traefik/acme.json
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    networks:
+    - mediaserver
+    cap_add:
+    - NET_ADMIN
+    - SYS_MODULE
+    environment:
+    - PUID=1000
+    - PGID=1000
+    - TZ=${TZ}
+    volumes:
+    - ./wireguard-config:/config
+    - /lib/modules:/lib/modules
+#    ports:
+#      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+
+
+volumes:
+  jellyfin-config: {}
+  jellyfin-cache: {}
+  tvdir: {}
+  moviesdir: {}
+  dlcompleted: {}
+  dlincompleted: {}
+  sonarr-config: {}
+  radarr-config: {}
+  ombi-config: {}
+  deluge-config: {}
+  jackett-config: {}
+
+networks:
+  mediaserver:
+    external: false
